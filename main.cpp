@@ -1,4 +1,4 @@
-// STATUS: START OF LAB 1
+// STATUS: END OF LAB 1
 
 #define _CRT_SECURE_NO_WARNINGS 1
 #include <vector>
@@ -91,8 +91,28 @@ public:
 	// t>=0 the distance between the ray origin and P (i.e., the parameter along the ray)
 	// and the unit normal N
 	bool intersect(const Ray& ray, Vector& P, double &t, Vector& N) const {
-		 // TODO (lab 1) : compute the intersection (just true/false at the begining of lab 1, then P, t and N as well)
-		return false;
+		// TODO (lab 1) : compute the intersection (just true/false at the begining of lab 1, then P, t and N as well)
+
+		Vector OC = ray.O - C;
+
+		double u_dot_OC = dot(ray.u, OC);
+		double norm2_OC = OC.norm2();
+
+		double Delta = u_dot_OC*u_dot_OC - (norm2_OC - R*R);
+
+		if (Delta < 0) { return false; }
+
+		double sqrt_Delta = sqrt(Delta);
+		double t_low = -u_dot_OC - sqrt_Delta;
+		double t_high = -u_dot_OC + sqrt_Delta;
+
+		if (t_high < 0) { return false; }
+		t = (t_low >= 0) ? t_low : t_high;
+		
+		P = ray.O + t*ray.u;
+		N = P - C;
+		N.normalize();
+		return true;
 	}
 
 	double R;
@@ -129,7 +149,24 @@ public:
 		// TODO (lab 1): iterate through the objects and check the intersections with all of them, 
 		// and keep the closest intersection, i.e., the one if smallest positive value of t
 
-		return false;
+		double t_min = 1e99;
+		bool hit_bool = false;
+
+		for (int i = 0; i < objects.size(); i++) {
+			Vector P_temp, N_temp;
+			double t_temp;
+			if (objects[i] -> intersect(ray, P_temp, t_temp, N_temp)) {
+				if (t_temp < t_min) {
+					t_min = t_temp;
+					P = P_temp;
+					N = N_temp;
+					t = t_temp;
+					object_id = i;
+					hit_bool = true;
+				}
+			}
+		}
+		return hit_bool;
 	}
 
 
@@ -143,22 +180,42 @@ public:
 
 		Vector P, N;
 		double t;
+		double eps = 1e-5;
 		int object_id;
 		if (intersect(ray, P, t, N, object_id)) {
 
 			if (objects[object_id]->mirror) {
-
 				// return getColor in the reflected direction, with recursion_depth+1 (recursively)
+				Vector reflection_dir = ray.u - 2*dot(ray.u, N)*N;
+				Ray reflected_ray(P + eps*N, reflection_dir);
+				return getColor(reflected_ray, recursion_depth+1);
 			} // else
 
 			if (objects[object_id]->transparent) { // optional
-
 				// return getColor in the refraction direction, with recursion_depth+1 (recursively)
 			} // else
 
 			// test if there is a shadow by sending a new ray
 			// if there is no shadow, compute the formula with dot products etc.
 
+			Vector light_dir = light_position - P;
+
+			double norm2_light_dir = light_dir.norm2();
+			double light_dist = sqrt(norm2_light_dir);
+			
+			light_dir = light_dir / light_dist;
+
+			Vector shadow_P, shadow_N;
+			double shadow_t;
+			int shadow_id;
+			Ray shadow_ray(P + eps*N, light_dir);
+			bool in_shadow = intersect(shadow_ray, shadow_P, shadow_t, shadow_N, shadow_id) && shadow_t < light_dist;
+
+			if (!in_shadow) {
+				double cos_angle = std::max(0., dot(N, light_dir));
+				Vector color = (light_intensity / (4*M_PI*norm2_light_dir)) * cos_angle * (1./M_PI) * objects[object_id] -> albedo;
+				return color;
+			}
 
 			// TODO (lab 2) : add indirect lighting component with a recursive call
 		}
@@ -193,23 +250,21 @@ int main() {
 	Sphere floor(Vector(0, -1000, 0), 990, Vector(0.6, 0.5, 0.7));
 
 	Scene scene;
-	scene.camera_center = Vector(0, 0, 0);
+	scene.camera_center = Vector(0, 0, 55);
 	scene.light_position = Vector(-10,20,40);
 	scene.light_intensity = 3E7;
 	scene.fov = 60 * M_PI / 180.;
-	scene.gamma = 1.0;    // TODO (lab 1) : play with gamma ; typically, gamma = 2.2
+	scene.gamma = 2.2;    // TODO (lab 1) : play with gamma ; typically, gamma = 2.2
 	scene.max_light_bounce = 5;
 
 	scene.addObject(&center_sphere);
 
-	/*
 	scene.addObject(&wall_left);
 	scene.addObject(&wall_right);
 	scene.addObject(&wall_front);
 	scene.addObject(&wall_behind);
 	scene.addObject(&ceiling);
 	scene.addObject(&floor);
-	*/
 
 	std::vector<unsigned char> image(W * H * 3, 0);
 
@@ -219,7 +274,9 @@ int main() {
 			Vector color;
 
 			// TODO (lab 1) : correct ray_direction so that it goes through each pixel (j, i)			
-			Vector ray_direction(0., 0., -1);
+			// Vector ray_direction(0., 0., -1);
+			Vector ray_direction(j - W/2. + 0.5, H/2 - i + 0.5, -W / (2. * tan(scene.fov / 2.)));
+			ray_direction.normalize();
 
 			Ray ray(scene.camera_center, ray_direction);
 
