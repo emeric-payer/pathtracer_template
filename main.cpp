@@ -1,4 +1,4 @@
-// STATUS: END OF LAB 1
+// STATUS: START OF LAB 2
 
 #define _CRT_SECURE_NO_WARNINGS 1
 #include <vector>
