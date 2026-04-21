@@ -1,9 +1,10 @@
-// STATUS: START OF LAB 2
+// STATUS: END OF LAB 2
 
 #define _CRT_SECURE_NO_WARNINGS 1
 #include <vector>
 #include <cmath>
 #include <random>
+#include <omp.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -55,6 +56,9 @@ Vector operator*(const double a, const Vector& b) {
 }
 Vector operator*(const Vector& a, const double b) {
 	return Vector(a[0]*b, a[1]*b, a[2]*b);
+}
+Vector operator*(const Vector& a, const Vector& b) { // implemented this new operator for vector multiplication
+    return Vector(a[0]*b[0], a[1]*b[1], a[2]*b[2]);
 }
 Vector operator/(const Vector& a, const double b) {
 	return Vector(a[0] / b, a[1] / b, a[2] / b);
@@ -131,6 +135,27 @@ public:
 	}
 };
 
+// Helper function implemented here (lab 2) based on the algorithm in the lecture slides
+Vector random_cos(const Vector& N) {
+    double r1 = uniform(engine[0]);
+    double r2 = uniform(engine[0]);
+    double x = cos(2*M_PI*r1) * sqrt(1-r2);
+    double y = sin(2*M_PI*r1) * sqrt(1-r2);
+    double z = sqrt(r2);
+
+    Vector T1;
+    if (std::abs(N[0]) <= std::abs(N[1]) && std::abs(N[0]) <= std::abs(N[2])) {
+        T1 = Vector(0, -N[2], N[1]);
+    } else if (std::abs(N[1]) <= std::abs(N[0]) && std::abs(N[1]) <= std::abs(N[2])) {
+        T1 = Vector(-N[2], 0, N[0]);
+    } else {
+        T1 = Vector(-N[1], N[0], 0);
+    }
+    T1.normalize();
+    Vector T2 = cross(N, T1);
+
+    return x*T1 + y*T2 + z*N;
+}
 
 class Scene {
 public:
@@ -211,17 +236,30 @@ public:
 			Ray shadow_ray(P + eps*N, light_dir);
 			bool in_shadow = intersect(shadow_ray, shadow_P, shadow_t, shadow_N, shadow_id) && shadow_t < light_dist;
 
+			// Commented this code during lab 2
+			/*
 			if (!in_shadow) {
 				double cos_angle = std::max(0., dot(N, light_dir));
 				Vector color = (light_intensity / (4*M_PI*norm2_light_dir)) * cos_angle * (1./M_PI) * objects[object_id] -> albedo;
 				return color;
 			}
+			*/
 
 			// TODO (lab 2) : add indirect lighting component with a recursive call
+
+			Vector direct_color(0, 0, 0);
+			if (!in_shadow) {
+				double cos_angle = std::max(0., dot(N, light_dir));
+				direct_color = (light_intensity / (4*M_PI*norm2_light_dir)) * cos_angle * (1./M_PI) * objects[object_id] -> albedo;
+			}
+
+			Vector indirect_dir = random_cos(N);
+			Ray indirect_ray(P + eps*N, indirect_dir);
+			Vector indirect_color = objects[object_id] -> albedo * getColor(indirect_ray, recursion_depth + 1);
+
+			return direct_color + indirect_color;
 		}
-
 		
-
 		return Vector(0, 0, 0);
 	}
 
@@ -273,18 +311,50 @@ int main() {
 		for (int j = 0; j < W; j++) {
 			Vector color;
 
-			// TODO (lab 1) : correct ray_direction so that it goes through each pixel (j, i)			
-			// Vector ray_direction(0., 0., -1);
-			Vector ray_direction(j - W/2. + 0.5, H/2 - i + 0.5, -W / (2. * tan(scene.fov / 2.)));
+			// TODO (lab 1) : correct ray_direction so that it goes through each pixel (j, i)
+
+			// Given Code
+			/*
+			Vector ray_direction(0., 0., -1);
+			*/
+
+			// Implemented in lab 1
+			/*
+			Vector ray_direction(j - W/2. + 0.5, H/2 - i - 0.5, -W / (2. * tan(scene.fov / 2.)));
 			ray_direction.normalize();
 
 			Ray ray(scene.camera_center, ray_direction);
+			*/
 
 			// TODO (lab 2) : add Monte Carlo / averaging of random ray contributions here
 			// TODO (lab 2) : add antialiasing by altering the ray_direction here
 			// TODO (lab 2) : add depth of field effect by altering the ray origin (and direction) here
 
+			// Given code
+			/*
 			color  = scene.getColor(ray, 0);
+			*/
+
+			// Implemented in lab 2
+			int N = 20;
+			double sigma = 0.4;
+
+			color = Vector(0, 0, 0);
+			for (int k = 0; k < N; k++) {
+
+				double r1 = uniform(engine[0]);
+				double r2 = uniform(engine[0]);
+				double dx = sigma * sqrt(-2*log(r1)) * cos(2*M_PI*r2);
+				double dy = sigma * sqrt(-2*log(r1)) * sin(2*M_PI*r2);
+
+				Vector ray_direction(j - W/2. + 0.5 + dx, H/2. - i - 0.5 + dy, -W / (2. * tan(scene.fov / 2.)));
+				ray_direction.normalize();
+
+				Ray ray(scene.camera_center, ray_direction); // Note to self: I will have to replace this with the code with aperture
+
+				color = color + scene.getColor(ray, 0);
+			}
+			color = color / N;
 
 			image[(i * W + j) * 3 + 0] = std::min(255., std::max(0., 255. * std::pow(color[0] / 255., 1. / scene.gamma)));
 			image[(i * W + j) * 3 + 1] = std::min(255., std::max(0., 255. * std::pow(color[1] / 255., 1. / scene.gamma)));
