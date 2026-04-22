@@ -1,4 +1,4 @@
-// STATUS: START OF LAB 3
+// STATUS: END OF LAB 3
 
 #define _CRT_SECURE_NO_WARNINGS 1
 #include <vector>
@@ -277,6 +277,74 @@ public:
 
 		// lab 3 : for each triangle, compute the ray-triangle intersection with Moller-Trumbore algorithm
 		// lab 3 : once done, speed it up by first checking against the mesh bounding box
+
+		// bounding box of the mesh on the fly
+		Vector Bmin( 1e99,  1e99,  1e99);
+		Vector Bmax(-1e99, -1e99, -1e99);
+
+		for (int i = 0; i < vertices.size(); i++) {
+			for (int k = 0; k < 3; k++) {
+				Bmin[k] = std::min(Bmin[k], vertices[i][k]);
+				Bmax[k] = std::max(Bmax[k], vertices[i][k]);
+			}
+		}
+
+		// slab test against the bounding box
+		double t_box_min = 0, t_box_max = 1e99;
+
+		for (int k = 0; k < 3; k++) {
+			double t1 = (Bmin[k]-ray.O[k]) / ray.u[k];
+			double t2 = (Bmax[k]-ray.O[k]) / ray.u[k];
+			t_box_min = std::max(t_box_min, std::min(t1, t2));
+			t_box_max = std::min(t_box_max, std::max(t1, t2));
+		}
+
+		if (t_box_max < t_box_min) {
+			return false;
+		}
+
+		// ray-triangle intersection via the Moller-Trumbore algorithm
+		double t_min = 1e99;
+		bool hit_bool = false;
+
+		for (int i = 0; i < indices.size(); i++) {
+			const Vector& A = vertices[indices[i].vtx[0]];
+			const Vector& B = vertices[indices[i].vtx[1]];
+			const Vector& C = vertices[indices[i].vtx[2]];
+
+			Vector e1 = B - A;
+			Vector e2 = C - A;
+			Vector N_triangle = cross(e1, e2);
+
+			Vector AO = A - ray.O;
+			Vector AO_cross_u = cross(AO, ray.u);
+			double u_dot_N = dot(ray.u, N_triangle);
+
+			double beta = dot(e2, AO_cross_u) / u_dot_N;
+			double gamma = -dot(e1, AO_cross_u) / u_dot_N;
+			double alpha = 1 - beta - gamma;
+			double t_triangle = dot(AO, N_triangle) / u_dot_N;
+
+			if (alpha < 0 || beta < 0 || gamma < 0) {
+				continue;
+			}
+
+			if (t_triangle < 0) {
+				continue;
+			}
+
+			if (t_triangle < t_min) {
+				t_min = t_triangle;
+				t = t_triangle;
+				P = ray.O + t*ray.u;
+				N = N_triangle;
+				N.normalize();
+				hit_bool = true;
+			}
+		}
+
+		return hit_bool;
+
 		// lab 4 : recursively apply the bounding-box test from a BVH datastructure
 
 
@@ -451,7 +519,7 @@ int main() {
 	scene.gamma = 2.2;    // TODO (lab 1) : play with gamma ; typically, gamma = 2.2
 	scene.max_light_bounce = 5;
 
-	scene.addObject(&center_sphere);
+	// scene.addObject(&center_sphere);
 
 	scene.addObject(&wall_left);
 	scene.addObject(&wall_right);
@@ -459,6 +527,12 @@ int main() {
 	scene.addObject(&wall_behind);
 	scene.addObject(&ceiling);
 	scene.addObject(&floor);
+
+	TriangleMesh cat(Vector(0.6, 0.6, 0.6));
+	cat.readOBJ("cat.obj");
+	cat.scale_translate(0.6, Vector(0, -10, 0));
+
+	scene.addObject(&cat);
 
 	std::vector<unsigned char> image(W * H * 3, 0);
 
@@ -492,7 +566,7 @@ int main() {
 			*/
 
 			// Implemented in lab 2
-			int N = 20;
+			int N = 5;
 			double sigma = 0.4;
 
 			color = Vector(0, 0, 0);
