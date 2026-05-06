@@ -1,4 +1,4 @@
-// STATUS: START OF LAB 4
+// STATUS: END OF LAB 4
 
 #define _CRT_SECURE_NO_WARNINGS 1
 #include <vector>
@@ -142,8 +142,46 @@ public:
 	int group;  // face group
 };
 
+// BVHNode Class implemented during lab 4
+class BVHNode {
+public:
+    Vector bbox_min, bbox_max;
+    int left, right;
+    int first_triangle, triangle_count;
+    
+    BVHNode() {
+        left = -1;
+        right = -1;
+        first_triangle = 0;
+        triangle_count = 0;
+    }
+};
+
 // Class only used in labs 3 and 4
 class TriangleMesh : public Object {
+
+// Added this during lab 4 to avoid recomputing the bounding box for each ray
+private:
+	mutable Vector Bmin, Bmax;
+	mutable bool bbox_computed = false;
+	
+	mutable std::vector<BVHNode> bvh_nodes;
+	mutable bool bool_bvh_built = false;
+	
+	void computeBoundingBox() const {
+		if (bbox_computed) return;
+		Bmin = Vector(1e99, 1e99, 1e99);
+		Bmax = Vector(-1e99, -1e99, -1e99);
+		
+		for (int i = 0; i < vertices.size(); i++) {
+			for (int k = 0; k < 3; k++) {
+				Bmin[k] = std::min(Bmin[k], vertices[i][k]);
+				Bmax[k] = std::max(Bmax[k], vertices[i][k]);
+			}
+		}
+		bbox_computed = true;
+	}
+
 public:
 	TriangleMesh(const Vector& albedo, bool mirror = false, bool transparent = false) : ::Object(albedo, mirror, transparent) {};
 
@@ -271,23 +309,68 @@ public:
 		}
 	}
 	
+	// Lab 4
+	void buildBVH() const {
+		if (bool_bvh_built) {
+			return;
+		}
+
+		bvh_nodes.clear();
+		buildBVHNode(0, indices.size());
+		bool_bvh_built = true;
+	}
+
+	int buildBVHNode(int first, int count) const {
+		int node_id = bvh_nodes.size();
+		bvh_nodes.push_back(BVHNode());
+		
+		bvh_nodes[node_id].bbox_min = Vector(1e99, 1e99, 1e99);
+		bvh_nodes[node_id].bbox_max = Vector(-1e99, -1e99, -1e99);
+		
+		for (int i = first; i < (first+count) && i < indices.size(); i++) {
+			for (int j = 0; j < 3; j++) {
+				if (indices[i].vtx[j] >= 0 && indices[i].vtx[j] < vertices.size()) {
+					Vector vertex = vertices[indices[i].vtx[j]];
+					for (int k = 0; k < 3; k++) {
+						if (vertex[k] < bvh_nodes[node_id].bbox_min[k]) {
+							bvh_nodes[node_id].bbox_min[k] = vertex[k];
+						}
+						if (vertex[k] > bvh_nodes[node_id].bbox_max[k]) {
+							bvh_nodes[node_id].bbox_max[k] = vertex[k];
+						}
+					}
+				}
+			}
+		}
+		
+		if (count <= 4) {
+			bvh_nodes[node_id].first_triangle = first;
+			bvh_nodes[node_id].triangle_count = count;
+			return node_id;
+		}
+		
+		int half = count / 2;
+		if (half > 0 && (first+half) < indices.size()) {
+			bvh_nodes[node_id].left = buildBVHNode(first, half);
+			bvh_nodes[node_id].right = buildBVHNode(first+half, count-half);
+		} else {
+			bvh_nodes[node_id].first_triangle = first;
+			bvh_nodes[node_id].triangle_count = count;
+		}
+		
+		return node_id;
+	}
 
 	// TODO ray-mesh intersection (labs 3 and 4)
+
+	/*
 	bool intersect(const Ray& ray, Vector& P, double& t, Vector& N) const {
 
 		// lab 3 : for each triangle, compute the ray-triangle intersection with Moller-Trumbore algorithm
 		// lab 3 : once done, speed it up by first checking against the mesh bounding box
 
 		// bounding box of the mesh on the fly
-		Vector Bmin( 1e99,  1e99,  1e99);
-		Vector Bmax(-1e99, -1e99, -1e99);
-
-		for (int i = 0; i < vertices.size(); i++) {
-			for (int k = 0; k < 3; k++) {
-				Bmin[k] = std::min(Bmin[k], vertices[i][k]);
-				Bmax[k] = std::max(Bmax[k], vertices[i][k]);
-			}
-		}
+		computeBoundingBox();
 
 		// slab test against the bounding box
 		double t_box_min = 0, t_box_max = 1e99;
@@ -347,10 +430,102 @@ public:
 
 		// lab 4 : recursively apply the bounding-box test from a BVH datastructure
 
+		return false;
+	}
+	*/
+
+	bool intersect(const Ray& ray, Vector& P, double& t, Vector& N) const {
+		buildBVH();
+		
+		double t_min = 1e99;
+		bool bool_hit = false;
+		
+		if (bvh_nodes.size() > 0) {
+			intersectBVH(ray, 0, t_min, P, N, bool_hit);
+		}
+		
+		if (bool_hit) {
+			t = t_min;
+			return true;
+		}
 
 		return false;
 	}
 
+	void intersectBVH(const Ray& ray, int node_id, double& t_min, Vector& P, Vector& N, bool& bool_hit) const {
+		if (node_id < 0 || node_id >= bvh_nodes.size()) return;
+		
+		const BVHNode& node = bvh_nodes[node_id];
+		
+		double t_box_min = 0, t_box_max = 1e99;
+		for (int i = 0; i < 3; i++) {
+			if (std::abs(ray.u[i]) < 1e-8) {
+				if (ray.O[i] < node.bbox_min[i] || ray.O[i] > node.bbox_max[i]) return;
+				continue;
+			}
+			
+			double t1 = (node.bbox_min[i]-ray.O[i]) / ray.u[i];
+			double t2 = (node.bbox_max[i]-ray.O[i]) / ray.u[i];
+
+			if (t1 > t2) {
+				double temp = t1; t1 = t2; t2 = temp;
+			}
+			if (t1 > t_box_min) {
+				t_box_min = t1;
+			}
+			if (t2 < t_box_max) {
+				t_box_max = t2;
+			}
+		}
+		
+		if (t_box_max < t_box_min) {
+			return;
+		}
+
+		if (node.left == -1) {
+			int end_idx = std::min(node.first_triangle + node.triangle_count, (int)indices.size());
+			for (int i = node.first_triangle; i < end_idx; i++) {
+				if (i < 0 || i >= indices.size()) continue;
+				if (indices[i].vtx[0] >= vertices.size() || indices[i].vtx[1] >= vertices.size() || indices[i].vtx[2] >= vertices.size()) continue;
+				
+				Vector A = vertices[indices[i].vtx[0]];
+				Vector B = vertices[indices[i].vtx[1]];
+				Vector C = vertices[indices[i].vtx[2]];
+				
+				Vector e1 = B - A;
+				Vector e2 = C - A;
+				Vector N_triangle = cross(e1, e2);
+				
+				Vector AO = A - ray.O;
+				Vector AO_cross_u = cross(AO, ray.u);
+				double u_dot_N = dot(ray.u, N_triangle);
+				
+				if (std::abs(u_dot_N) < 1e-8) {
+					continue;
+				}
+
+				double beta = dot(e2, AO_cross_u) / u_dot_N;
+				double gamma = -dot(e1, AO_cross_u) / u_dot_N;
+				double alpha = 1 - beta - gamma;
+				double t_triangle = dot(AO, N_triangle) / u_dot_N;
+				
+				if (alpha >= 0 && beta >= 0 && gamma >= 0 && t_triangle > 0 && t_triangle < t_min) {
+					t_min = t_triangle;
+					P = ray.O + t_triangle * ray.u;
+					N = N_triangle;
+					N.normalize();
+					bool_hit = true;
+				}
+			}
+		} else {
+			if (node.left >= 0) {
+				intersectBVH(ray, node.left, t_min, P, N, bool_hit);
+			}
+			if (node.right >= 0) {
+				intersectBVH(ray, node.right, t_min, P, N, bool_hit);
+			}
+		}
+	}
 
 	std::vector<TriangleIndices> indices;
 	std::vector<Vector> vertices;
@@ -361,8 +536,9 @@ public:
 
 // Helper function implemented here (lab 2) based on the algorithm in the lecture slides
 Vector random_cos(const Vector& N) {
-    double r1 = uniform(engine[0]);
-    double r2 = uniform(engine[0]);
+    double r1 = uniform(engine[omp_get_thread_num()]);
+    double r2 = uniform(engine[omp_get_thread_num()]);
+
     double x = cos(2*M_PI*r1) * sqrt(1-r2);
     double y = sin(2*M_PI*r1) * sqrt(1-r2);
     double z = sqrt(r2);
@@ -442,6 +618,39 @@ public:
 
 			if (objects[object_id]->transparent) { // optional
 				// return getColor in the refraction direction, with recursion_depth+1 (recursively)
+				double n1 = 1.0;
+				double n2 = 1.5;
+				Vector N_oriented = N;
+
+				if (dot(ray.u, N) > 0) {
+					std::swap(n1, n2);
+					N_oriented = -1. * N;
+				}
+
+				double cos_i = -dot(ray.u, N_oriented);
+				double k = 1.0 - (n1/n2)*(n1/n2) * (1 - cos_i*cos_i);
+
+				if (k < 0) {
+					Vector reflection_dir = ray.u - 2*dot(ray.u, N_oriented)*N_oriented;
+					Ray reflected_ray(P + eps*N_oriented, reflection_dir);
+					return getColor(reflected_ray, recursion_depth+1);
+				}
+
+				double R0 = (n1-n2)/(n1+n2);
+				R0 = R0*R0;
+				double R = R0 + (1-R0) * std::pow(1-cos_i, 5);
+
+				double rnd = uniform(engine[omp_get_thread_num()]);
+				if (rnd < R) {
+					Vector reflection_dir = ray.u - 2*dot(ray.u, N_oriented)*N_oriented;
+					Ray reflected_ray(P + eps*N_oriented, reflection_dir);
+					return getColor(reflected_ray, recursion_depth+1);
+				} else {
+					Vector refraction_dir = (n1/n2)*ray.u + ((n1/n2)*cos_i - std::sqrt(k))*N_oriented;
+					Ray refracted_ray(P - eps*N_oriented, refraction_dir);
+					return getColor(refracted_ray, recursion_depth+1);
+				}
+			
 			} // else
 
 			// test if there is a shadow by sending a new ray
@@ -533,6 +742,7 @@ int main() {
 	cat.scale_translate(0.6, Vector(0, -10, 0));
 
 	scene.addObject(&cat);
+	cat.buildBVH(); 
 
 	std::vector<unsigned char> image(W * H * 3, 0);
 
@@ -572,8 +782,8 @@ int main() {
 			color = Vector(0, 0, 0);
 			for (int k = 0; k < N; k++) {
 
-				double r1 = uniform(engine[0]);
-				double r2 = uniform(engine[0]);
+				double r1 = uniform(engine[omp_get_thread_num()]);
+				double r2 = uniform(engine[omp_get_thread_num()]);
 				double dx = sigma * sqrt(-2*log(r1)) * cos(2*M_PI*r2);
 				double dy = sigma * sqrt(-2*log(r1)) * sin(2*M_PI*r2);
 
@@ -595,3 +805,5 @@ int main() {
 
 	return 0;
 }
+
+// Compiled using: g++ -O3 -fopenmp main.cpp -o main
